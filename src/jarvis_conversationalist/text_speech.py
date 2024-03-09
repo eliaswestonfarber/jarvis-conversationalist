@@ -24,9 +24,8 @@ if sys.platform == 'darwin':
         vflag = ['-v', 'Tom (Enhanced)']
     if out.stdout.decode("utf-8").find("Evan (Enhanced)") >= 0:
         vflag = ['-v', 'Evan (Enhanced)']
-if sys.platform == 'linux':
-    env = os.environ.copy()
-    env["PATH"] = sys.executable + os.pathsep + env["PATH"]
+env = os.environ.copy()
+env["PATH"] = sys.executable + os.pathsep + env["PATH"]
 
 
 class TextToSpeechError(Exception):
@@ -209,8 +208,9 @@ def text_to_speech(text: str, model="gpt-4", stream=False):
         fixed_text = "[[rate 175]] " + first_word + "[[rate 200]] " + rest_of_text
         text_cmd = f'[[pbas {pitch}]] [[slnc 100]]{fixed_text}[[slnc 100]]'
         output_file = os.path.join(audio_folder, str(uuid.uuid4()) + ".wav")
+        print(['say']+vflag+[text_cmd, "-o", output_file, '--data-format=LEI16@22050'])
         result = subprocess.run(['say']+vflag+[text_cmd, "-o", output_file, '--data-format=LEI16@22050'],
-                                capture_output=True)
+                                capture_output=True, env=env)
         if not stream:
             return output_file
         if result.returncode != 0:
@@ -229,7 +229,7 @@ def text_to_speech(text: str, model="gpt-4", stream=False):
         output_file = os.path.join(audio_folder, str(uuid.uuid4()) + ".wav")
         result = subprocess.run(f"mimic3 \"{text_cmd}\" --length-scale {speed} > '{output_file}'",
                                 capture_output=True,
-                                env=env, shell=True)
+                                env=env)
         if not stream:
             return output_file
         if result.returncode != 0:

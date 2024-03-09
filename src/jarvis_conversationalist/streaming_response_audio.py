@@ -288,16 +288,12 @@ def stream_audio_response(streaming_text: Iterator[Dict], stop_audio_event: Opti
                         buffer = merged_sentences[-1]
             if resp.choices[0].delta.tool_calls:
                 for tool in resp.choices[0].delta.tool_calls:
-                    if tool.function:
-                        if tool.function.name:
-                            tool_calls[tool.index] = {"name": tool.function.name}
-                        elif tool.function.arguments:
-                            if "arguments" in tool_calls[tool.index]:
-                                tool_calls[tool.index]["arguments"] += tool.function.arguments
-                            else:
-                                tool_calls[tool.index]["arguments"] = tool.function.arguments
-                    else:
-                        warnings.warn("Tool call does not contain a function.")
+                    tool_calls[tool.index] = tool_calls.get(tool.index, {"id": None, "arguments": "", "name": ""})
+                    if tool.id:
+                        tool_calls[tool.index]["id"] = tool.id
+                    if tool.function.name:
+                        tool_calls[tool.index]["name"] = tool.function.name
+                    tool_calls[tool.index]["arguments"] += tool.function.arguments
 
     if skip:
         if skip.is_set():
@@ -327,7 +323,16 @@ def stream_audio_response(streaming_text: Iterator[Dict], stop_audio_event: Opti
     speech_stream.stop()
     if len(tool_calls) == 0:
         tool_calls = None
-    return output, reason, tool_calls
+    if tool_calls:
+        fixed_tool_calls = {}
+        for k, v in tool_calls.items():
+            if v["id"] is not None:
+                fixed_tool_calls[v["id"]] = {"name": v["name"], "arguments": v["arguments"]}
+            else:
+                fixed_tool_calls[str(k)] = {"name": v["name"], "arguments": v["arguments"]}
+    else:
+        fixed_tool_calls = None
+    return output, reason, fixed_tool_calls
 
 
 def set_rt_text_queue(rt_text_queue: Queue) -> None:

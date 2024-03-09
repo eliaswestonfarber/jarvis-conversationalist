@@ -8,6 +8,7 @@ from datetime import datetime
 from src.jarvis_conversationalist.config import get_openai_key
 if get_openai_key() is not None:
     os.environ["OPENAI_API_KEY"] = get_openai_key()
+    os.environ["TOKENIZERS_PARALLELISM"] = "true"
 from src.jarvis_conversationalist.logger_config import get_logger
 from src.jarvis_conversationalist.conversationalist import process_assistant_response, get_core_path, converse
 from src.jarvis_conversationalist.audio_player import play_audio_file

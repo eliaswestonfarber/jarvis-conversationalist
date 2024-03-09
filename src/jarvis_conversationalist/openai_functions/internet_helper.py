@@ -10,13 +10,13 @@ from tiktoken import encoding_for_model
 client = OpenAI()
 _utils._logs.logger.setLevel("CRITICAL")
 
-basic_model = "gpt-3.5-turbo-16k"
-advanced_model = "gpt-4"
+basic_model = "gpt-3.5-turbo-1106"
+advanced_model = "gpt-4-turbo-preview"
 enc = encoding_for_model(advanced_model)
 temperature = 0.6
 
 
-def search(search_term: str, num_results: int = 10, advanced: bool = False) -> dict:
+def search(search_term: str, num_results: int = 15, advanced: bool = False) -> dict:
     """
     Searches for a term using either Google Custom Search API or a free alternative.
 
@@ -173,7 +173,7 @@ def synthesize_information(summaries: list, query: str) -> str:
     response = client.chat.completions.create(model=advanced_model,
     messages=[{"role": "system", "content": f"Given the following summaries about '{query}', please synthesize "
                                             f"a coherent and comprehensive response:\n{summaries_text}\n"}],
-    max_tokens=500,
+    max_tokens=1000,
     n=1,
     temperature=temperature)
     synthesized_info = response.choices[0].message.content
@@ -201,7 +201,7 @@ def truncate_content(content: str, max_tokens: int = 3500) -> str:
         return content
 
 
-def search_helper(query: str, result_number: int = 6, skip: threading.Event = None) -> dict:
+def search_helper(query: str, result_number: int = 15, skip: threading.Event = None) -> dict:
     """
     Helper function for search.
 
@@ -333,7 +333,7 @@ def generate_final_prompt(simplified_output: dict, max_tokens: int = 1800) -> st
     return prompt
 
 
-def create_internet_context(query: str, result_number: int = 10,
+def create_internet_context(query: str, result_number: int = 15,
                             max_tokens: int = 1800, skip: threading.Event = None) -> tuple:
     """
     Creates the internet context for the chatbot.

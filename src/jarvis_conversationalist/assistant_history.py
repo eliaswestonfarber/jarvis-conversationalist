@@ -58,6 +58,25 @@ def strip_entry(entry: dict or list):
         return {"role": entry["role"], "content": entry["content"]}
 
 
+def denormalize(entry: dict or list):
+    """
+    Remove all fields from the entry dictionary except 'role' and 'content'.
+
+    :param entry: A dictionary containing a conversation entry.
+    :type entry: dict
+    :return: A new dictionary containing only the 'role' and 'content' fields from the original entry.
+    :rtype: dict
+    """
+    if isinstance(entry, list):
+        new = []
+        for el in entry:
+            new.append(denormalize(el))
+        return new
+    else:
+        # dictionary comprehension to convert all values that are lists or dictionaries to strings
+        return {k: v if not isinstance(v, list) and not isinstance(v, dict) else str(v) for k, v in entry.items()}
+
+
 class AssistantHistory:
     """
     A class to manage the Assistant's conversation history, including storing, reducing,
@@ -305,6 +324,10 @@ class AssistantHistory:
         ids = []
         seed = str(uuid.uuid4())
         for i in range(len(context)):
+            for k in context[i].keys():
+                test = context[i][k]
+                if isinstance(test, list) or isinstance(test, dict):
+                    context[i][k] = str(test)
             context[i]['id'] = self.create_id(seed)
             ids.append(context[i]['id'])
             if first_id is None:
@@ -397,9 +420,9 @@ class AssistantHistory:
         self.update_ltm()
         self.to_summarize = []
 
-    def gather_context(self, query: str or list, minimum_recent_history_length: int = 2, max_tokens: int = None,
+    def gather_context(self, query: str or list, minimum_recent_history_length: int = 5, max_tokens: int = None,
                        only_summaries: bool = False, only_necessary_fields: bool = True,
-                       distance_cut_off: float = None, query_n_max: int = 3, verbose: bool = False) -> List[dict]:
+                       distance_cut_off: float = None, query_n_max: int = 6, verbose: bool = False) -> List[dict]:
         """
         Gathers relevant context for a given query from the chat assistant's history.
 
@@ -563,7 +586,7 @@ class AssistantHistory:
         if only_necessary_fields:
             context_list = [strip_entry(entry) for entry in context_list]
 
-        self.last_context = system_message + context_list
+        self.last_context = denormalize(system_message + context_list)
 
         if verbose:
             from pprint import pprint
@@ -606,7 +629,7 @@ class AssistantHistory:
                 entry["content"] = results["documents"][pos]
                 entry["id"] = tid
                 output.append(entry)
-        return output
+        return denormalize(output)
 
     def get_history_from_last_batch(self):
         """
@@ -678,7 +701,7 @@ class AssistantHistory:
                 time_stamp['content'] = stamp
                 time_stamp['role'] = 'system'
                 time_stamp = [time_stamp]
-        return time_stamp + output
+        return time_stamp + denormalize(output)
 
     def get_summary_from_id_and_earlier(self, id=None, n_results=10):
         """
@@ -708,7 +731,7 @@ class AssistantHistory:
                 output.append(entry)
             if results["ids"].count(str(tid)) > 1:
                 warnings.warn("Chat assistant: More than one summary found for id {}".format(id))
-        return output
+        return denormalize(output)
 
     def truncate_input_context(self, context):
         """

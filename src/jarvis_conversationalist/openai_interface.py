@@ -13,6 +13,9 @@ from .assistant_history import AssistantHistory, convert_utc_to_local
 from .openai_functions.functions import get_function_list, get_function_info, get_system_appendix
 from .speaker_functions import get_speaker_function_list, get_speaker_function_info, get_speaker_system_appendix
 
+if os.environ.get("OPENAI_API_KEY") is None:
+    from .config import get_openai_key
+    os.environ["OPENAI_API_KEY"] = get_openai_key()
 client = OpenAI()
 _utils._logs.logger.setLevel("CRITICAL")
 
@@ -24,17 +27,17 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 os.environ["SSL_CERT_FILE"] = certifi.where()
 
 # Configuration
-models = {"primary": {"name": "gpt-4",
-                      "max_message": 800,
-                      "max_history": 6600,
-                      "temperature": 0.5,
+models = {"primary": {"name": "gpt-4-turbo-preview",
+                      "max_message": 4000,
+                      "max_history": 120000,
+                      "temperature": 0.3,
                       "top_p": 1,
                       "frequency_penalty": 0.19,
                       "presence_penalty": 0},
           "limit": 100,
           "time": 60*60,
           "requests": [],
-          "fall_back": {"name": "gpt-3.5-turbo-16k",
+          "fall_back": {"name": "gpt-3.5-turbo-1106",
                         "max_message": 800,
                         "max_history": 12000,
                         "temperature": 0.5,
@@ -106,41 +109,21 @@ def summarizer(input_list):
     return {"role": "system", "content": output}
 
 
-def recollect(question="", query="", mode=""):
+def recollect(query="", max_retry=6, mode="response"):
     """
     Search the conversation history for a query.
 
-    :param question: The question to answer.
-    :type question: str
     :param query: The query input.
     :type query: str
-    :param mode: The mode to search in.
-    Can be 'search_exact_text_full', 'search_exact_text_summaries', 'vector_similarity_full', or
-    'vector_similarity_summaries'.
+    :param max_retry: The maximum number of retries to attempt.
+    :type max_retry: int
+    :param mode: The mode to use.
     :type mode: str
     :return: The AI Assistant's response.
     :rtype: str
     """
     global models
-    description = ""
-    if mode == "search_exact_text_summaries":
-        description = "search for the literal string '" + query + \
-                      "' in a collection of summaries of conversations"
-        results = history_access.summaries.get(where_document={"$contains": query},
-                                               include=["metadatas", "documents"])
-    if mode == "search_exact_text_full":
-        description = "search for the literal string '" + query + "' in a collection of conversations"
-        results = history_access.history.get(where_document={"$contains": query},
-                                             include=["metadatas", "documents"])
-    if mode == "vector_similarity_summaries":
-        description = "search for the most similar string to '" + query + \
-                      "' in a collection of summaries of conversations"
-        results = history_access.summaries.query(query_texts=[query], n_results=20,
-                                                 include=["metadatas", "documents"])
-    if mode == "vector_similarity_full":
-        description = "search for the most similar string to '" + query + "' in a collection of conversations"
-        results = history_access.history.query(query_texts=[query], n_results=20,
-                                               include=["metadatas", "documents"])
+
     if mode == "schema":
         schema = {"type": "function",
                   "function": {
@@ -149,79 +132,229 @@ def recollect(question="", query="", mode=""):
                      "parameters": {
                         "type": "object",
                         "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question to answer.",
-                            },
                             "query": {
                                 "type": "string",
-                                "description": "The query to search for. If mode is 'search_exact_text_full' or "
-                                               "'search_exact_text_summaries' this is the literal string to search "
-                                               "for so keep it short or you will get no results. If mode is "
-                                               "'vector_similarity_full' or 'vector_similarity_summaries' this "
-                                               "is the string to find the most similar "
-                                               "string to so you can make it longer.",
-                            },
-                            "mode": {
-                                "type": "string",
-                                "description": "The mode to search in. Can be 'search_exact_text_full', "
-                                               "'search_exact_text_summaries', 'vector_similarity_full', or "
-                                               "'vector_similarity_summaries'. 'search_exact_text_full' searches "
-                                               "for the literal string in a collection of summaries of conversations. "
-                                               "'search_exact_text_summaries' searches for the literal string in a "
-                                               "collection of  conversations. 'vector_similarity_full' searches for "
-                                               "the most similar string to the query in a collection of summaries of "
-                                               "conversations. 'vector_similarity_summaries' searches for the most "
-                                               "similar string to the query in a collection of conversations.",
-                            },
+                                "description": "The question to answer, the thing to look up, the fact to remember.",
+                            }
                         },
-                        "required": ["question", "query", "mode"],
+                        "required": ["query",],
                      },
                   }
                   }
         return schema
     if mode == "examples":
         examples = 'Examples:\n{"function_name": "recollect", "parameters": {"question": "What is the name of the' \
-                   'user\'s dog?", "query": "dog", "mode": "search_exact_text_full"}}\n{"function_name": "recollect",' \
-                   ' parameters": {"question": "What is the town the user grew up in?", "query": "I was born in' \
-                   ' and grew up in ", "mode": "vector_similarity_summaries"}}\n'
+                   'user\'s dog?"}}\n'
         return examples
-    if description == "":
-        raise Exception("Invalid mode")
 
-    if len(results) == 0:
-        raise Exception("No results found")
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_exact_text_full",
+                "description": "Searches for the literal string in a collection of summaries of conversations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The literal string to search for in the summaries of conversations. "
+                                           "Keep it short to avoid no results."
+                        }
+                    },
+                    "required": ["query"]
+                },
+                "returns": {
+                    "type": "string",
+                    "description": "The search result."
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_exact_text_summaries",
+                "description": "Searches for the literal string in a collection of conversations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The literal string to search for in the conversations. "
+                                           "Keep it short to avoid no results."
+                        }
+                    },
+                    "required": ["query"]
+                },
+                "returns": {
+                    "type": "string",
+                    "description": "The search result."
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "vector_similarity_full",
+                "description": "Searches for the most similar string to the query in a collection of summaries "
+                               "of conversations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The string to find the most similar string to, in summaries of "
+                                           "conversations. The query can be longer as it seeks similarity."
+                        }
+                    },
+                    "required": ["query"]
+                },
+                "returns": {
+                    "type": "string",
+                    "description": "The search result."
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "vector_similarity_summaries",
+                "description": "Searches for the most similar string to the query in a collection of conversations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The string to find the most similar string to, in conversations. "
+                                           "The query can be longer as it seeks similarity."
+                        }
+                    },
+                    "required": ["query"]
+                },
+                "returns": {
+                    "type": "string",
+                    "description": "The search result."
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "answer_question",
+                "description": "After finding a response to the query, this function can be used to answer the "
+                               "question and complete your work.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "answer": {
+                            "type": "string",
+                            "description": "The response to the query."
+                        }
+                    },
+                    "required": ["answer"]
+                }
+            }
+        }
+    ]
 
-    input_list = []
-    for i in range(len(results['ids'])):
-        print(results)
-        if mode.startswith("vector_similarity"):
-            input_list.append({"role": results["metadatas"][0][i]["role"],
-                               "content": results["documents"][0][i] +
-                               "\n" + " took place on: " +
-                               convert_utc_to_local(results["metadatas"][0][i]["utc_time"])})
+    def prep_results(results, mode="vector"):
+        input_list = []
+        for i in range(len(results['ids'])):
+            if mode == "vector":
+                input_list.append({"role": results["metadatas"][0][i]["role"],
+                                   "content": results["documents"][0][i] +
+                                              "\n" + " took place on: " +
+                                              convert_utc_to_local(results["metadatas"][0][i]["utc_time"])})
+            else:
+                input_list.append({"role": results["metadatas"][i]["role"],
+                                   "content": results["documents"][i] + "\n" + " took place on: " +
+                                              convert_utc_to_local(results["metadatas"][i]["utc_time"])})
+
+        input_list = history_access.truncate_input_context(input_list)
+        return str(input_list)
+
+    def search_exact_text_full(query=None):
+        description = "search for the literal string '" + query + "' in a collection of conversations"
+        results = history_access.history.get(where_document={"$contains": query},
+                                             include=["metadatas", "documents"])
+
+        return description+": \n"+prep_results(results, mode="exact")
+
+    def search_exact_text_summaries(query=None):
+        description = "search for the literal string '" + query + \
+                      "' in a collection of summaries of conversations"
+        results = history_access.summaries.get(where_document={"$contains": query},
+                                               include=["metadatas", "documents"])
+        return description+": \n"+prep_results(results, mode="exact")
+
+    def vector_similarity_full(query=None):
+        description = "search for the most similar string to '" + query + "' in a collection of conversations"
+        results = history_access.history.query(query_texts=[query], n_results=20,
+                                               include=["metadatas", "documents"])
+        return description+": \n"+prep_results(results)
+
+    def vector_similarity_summaries(query=None):
+        description = "search for the most similar string to '" + query + \
+                        "' in a collection of summaries of conversations"
+        results = history_access.summaries.query(query_texts=[query], n_results=20,
+                                                 include=["metadatas", "documents"])
+        return description+": \n"+prep_results(results)
+
+    def answer_question(answer):
+        return answer
+
+    function_map = {"search_exact_text_full": {"function": search_exact_text_full},
+                    "search_exact_text_summaries": {"function": search_exact_text_summaries},
+                    "vector_similarity_full": {"function": vector_similarity_full},
+                    "vector_similarity_summaries": {"function": vector_similarity_summaries},
+                    "answer_question": {"function": answer_question}
+                    }
+    function_order = ["search_exact_text_full", "vector_similarity_full",
+                        "search_exact_text_summaries", "vector_similarity_summaries"]
+
+    messages = [{"role": "system", "content": "You help the user (which is an AI asssitant) "
+                                              "remember details from previous conversations "
+                                              "by searching your memory for a query and attempting to answer the user's"
+                                              " question. Use all the tools available to you to find the information "
+                                              " you need. If you need to try to refine your search, after not finding "
+                                              "the answer, you can try again with a different query. Use the"
+                                              " answer_question function to complete your work once you have found "
+                                              "a response to the query. If you encounter errors make sure to include "
+                                              "the fact that you encountered an error when searching when "
+                                              "composing your answer to the AI"},
+                  {"role": "user", "content": "Find the answer to this query: " + query}]
+    runs = 0
+    tool_choice = "auto"
+    while max_retry > runs:
+        response = client.chat.completions.create(model=models["primary"]['name'],
+                                                  messages=messages,
+                                                  temperature=0,
+                                                  max_tokens=models["primary"]["max_message"],
+                                                  top_p=models["primary"]["top_p"],
+                                                  frequency_penalty=models["primary"]["frequency_penalty"],
+                                                  presence_penalty=models["primary"]["presence_penalty"],
+                                                  tools=tools,
+                                                  tool_choice=tool_choice)
+        # if there is tool use check if the only tool call is the answer_question function
+        message_content = response.choices[0].message.content
+        tool_calls = {}
+        if response.choices[0].message.tool_calls:
+            tool_choice = "auto"
+            tool_calls_raw = response.choices[0].message.tool_calls
+            for tool_call in tool_calls_raw:
+                tool_call_dict = {"name": tool_call.function.name, "arguments": tool_call.function.arguments}
+                tool_calls[tool_call.id] = tool_call_dict
+            results = use_tools(tool_calls, message_content, function_map=function_map)
+            if results:
+                messages += results
+            if len(results) == 1:
+                if results[-1]["role"] == "tool":
+                    if results[-1]["name"] == "answer_question":
+                        return "You recall: " + results[-1]["content"]
         else:
-            input_list.append({"role": results["metadatas"][i]["role"], "content": results["documents"][i] + "\n" +
-                               " took place on: " + convert_utc_to_local(results["metadatas"][i]["utc_time"])})
-    input_list = history_access.truncate_input_context(input_list)
-
-    system_mem = [{"role": "system", "content": "You help an AI remember things by receiving a context based on a " +
-                                                description + "\n Please help it answer the following question:" +
-                                                "\n\n" + question + "\n\nNOTE: If the current conversation  " +
-                                                "context does not contain the answer to the question, " +
-                                                "make sure to tell the AI to modify either modify the query and if"
-                                                "the recollection process fails to the answer the question after"
-                                                "multiple query modifications, to consider the possibility that "
-                                                "what it is trying to remember 'is not in our memories'."}]
-    response = client.chat.completions.create(model=models["primary"]['name'],
-                                              messages=system_mem,
-                                              temperature=.1,
-                                              max_tokens=models["primary"]["max_message"],
-                                              top_p=models["primary"]["top_p"],
-                                              frequency_penalty=models["primary"]["frequency_penalty"],
-                                              presence_penalty=models["primary"]["presence_penalty"])
-    output = response.choices[0].message.content
-    return output
+            tool_choice = {"type": "function", "function": {"name": function_order.pop(0)}}
+        runs += 1
+    return "The answer to your query could not be found. Please try again with a different query."
 
 
 function_info["recollect"] = {"function": recollect,
@@ -431,33 +564,44 @@ def stream_response(query, query_role="user", keep_last_history=False):
                                               tools=tools_list)
 
 
-def use_tools(tool_calls, content):
+def use_tools(tool_calls, content, function_map=None):
     """
     Use the tools specified in the tool_calls dict.
     :param tool_calls:
     :type tool_calls: dict
     :param content:
     :type content: str
+    :param function_map:
+    :type function_map: dict
     :return: list of history items
     :rtype: list
     """
-    new_history = [{"content": content, "role": "assistant"}]
+    tool_calls_list = []
+    for tool_id, tool_call in tool_calls.items():
+        tool_calls_list.append({'function': {
+            "arguments": tool_call['arguments'],
+            "name": tool_call['name']
+        }, 'id': tool_id, 'type': 'function'})
+    new_history = [{"content": content, "role": "assistant", "tool_calls": tool_calls_list}]
     tool_results = []
     tool_errors = []
 
-    for tool_call in tool_calls.values():
-        results, errors = use_tool(tool_call)
+    for tool_id, tool_call in tool_calls.items():
+        results, errors = use_tool(tool_call, tool_id, function_map=function_map)
         tool_results += results
         tool_errors += errors
-
     return new_history + tool_results+tool_errors
 
 
-def use_tool(tool_call):
+def use_tool(tool_call, tool_id, function_map=None):
     """
     Use the tool specified in the tool_call dict.
     :param tool_call:
     :type tool_call: dict
+    :param tool_id:
+    :type tool_id: str
+    :param function_map:
+    :type function_map: dict
     :return: results and errors
     :rtype: tuple
     """
@@ -466,12 +610,14 @@ def use_tool(tool_call):
     results = []
     errors = []
     missing_function = False
+    if function_map is None:
+        function_map = function_info
     try:
-        called_function = function_info[function_name]['function']
+        called_function = function_map[function_name]['function']
     except KeyError:
         missing_function = True
         logger.error("KeyError:"+" "+str(function_name))
-        errors.append({"content": "ERROR", "role": "function",
+        errors.append({"content": "ERROR", "role": "tool",
                        "name": function_name})
         errors.append({"content": "Only use a valid function in your "
                                   "function list.", "role": "system"})
@@ -480,10 +626,9 @@ def use_tool(tool_call):
             arguments = json.loads(tool_call['arguments'])
             try:
                 result = called_function(**arguments)
-                results.append({"content": str(result), "role": "function",
-                                "name": function_name})
+                results.append({"role": "tool", "name": function_name, "content": str(result), "tool_call_id": tool_id})
             except Exception as e:
-                errors.append({"content": "ERROR", "role": "function",
+                errors.append({"content": "ERROR", "role": "tool", "tool_call_id": tool_id,
                                "name": function_name})
                 errors.append({"content": "Error calling "
                                           "" + function_name +
@@ -491,7 +636,7 @@ def use_tool(tool_call):
                                           "" + str(arguments) + " : " + str(e),
                                "role": "system"})
         except json.decoder.JSONDecodeError:
-            required_arguments = function_info[function_name]['schema']['function']['parameters']['required']
+            required_arguments = function_map[function_name]['schema']['function']['parameters']['required']
             if tool_call['arguments'] == "":
                 new_history_item = {"content": "You're function call did not "
                                                "include any arguments. Please try again with the "
@@ -500,7 +645,7 @@ def use_tool(tool_call):
             else:
                 new_history_item = {"content": "You're function call did not parse as valid JSON. "
                                                "Please try again", "role": "system"}
-            errors.append({"content": "ERROR", "role": "function", "name": function_name})
+            errors.append({"content": "ERROR", "role": "tool", "name": function_name, "tool_call_id": tool_id})
             errors.append(new_history_item)
     return results, errors
 
