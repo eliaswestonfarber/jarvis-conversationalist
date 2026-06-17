@@ -5,7 +5,7 @@ from openai import OpenAI
 client = OpenAI()
 
 temperature = 0.6
-basic_model = "gpt-3.5-turbo-1106"
+basic_model = "gpt-4o-mini"
 
 
 def geocoder_api(query):

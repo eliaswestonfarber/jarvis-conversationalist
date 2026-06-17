@@ -10,8 +10,8 @@ from tiktoken import encoding_for_model
 client = OpenAI()
 _utils._logs.logger.setLevel("CRITICAL")
 
-basic_model = "gpt-3.5-turbo-1106"
-advanced_model = "gpt-4-turbo-preview"
+basic_model = "gpt-4o-mini"
+advanced_model = "gpt-4o"
 enc = encoding_for_model(advanced_model)
 temperature = 0.6
 

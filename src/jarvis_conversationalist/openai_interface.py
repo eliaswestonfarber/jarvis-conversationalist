@@ -27,7 +27,7 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 os.environ["SSL_CERT_FILE"] = certifi.where()
 
 # Configuration
-models = {"primary": {"name": "gpt-4-turbo-preview",
+models = {"primary": {"name": "gpt-4o",
                       "max_message": 4000,
                       "max_history": 120000,
                       "temperature": 0.3,
@@ -37,7 +37,7 @@ models = {"primary": {"name": "gpt-4-turbo-preview",
           "limit": 100,
           "time": 60*60,
           "requests": [],
-          "fall_back": {"name": "gpt-3.5-turbo-1106",
+          "fall_back": {"name": "gpt-4o-mini",
                         "max_message": 800,
                         "max_history": 12000,
                         "temperature": 0.5,
