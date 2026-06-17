@@ -22,7 +22,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "jarvis_conversationalist.audio_files" = ["*.wav"]
 [project.urls]
-url = "https://github.com/elias-jhsph/jarvis-conversationalist"
+url = "https://github.com/eliaswestonfarber/jarvis-conversationalist"
 [options]
 python_requires = ">=3.11.8"
 [build-system]
