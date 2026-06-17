@@ -4,13 +4,22 @@ version = "0.5.1"
 authors = [{name="Elias Weston-Farber", email="eweston4@jhu.edu"}]
 description = "A voice assistant for the command line"
 readme = "README.md"
+requires-python = ">=3.11.8,<3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: OS Independent",
 ]
-dependencies = ["torch>2.0.0", "openai==1.13.3", "httpx<0.28", "openai-whisper",
-    "chromadb","soundfile==0.12.1","sounddevice","pydub==0.25.1", "pyannote.audio==3.1.0", "faiss-cpu",
+# NOTE: pyannote.audio 3.1.0 is incompatible with numpy 2.x and with the
+# audio-backend API removed in torchaudio>=2.2, and its (transitive) pyannote.*
+# 6.x/4.x + huggingface_hub 1.x dependencies drift away from it. The pins below
+# are a verified, mutually-compatible 2023-era constellation (works on Python
+# 3.11; torch 2.1.2 has no 3.12 wheels, hence the requires-python cap above).
+dependencies = ["torch==2.1.2", "torchaudio==2.1.2", "numpy<2", "openai==1.13.3", "httpx<0.28", "openai-whisper",
+    "chromadb","soundfile==0.12.1","sounddevice","pydub==0.25.1",
+    "pyannote.audio==3.1.0", "pyannote.core==5.0.0", "pyannote.database==5.0.1",
+    "pyannote.metrics==3.2.1", "pyannote.pipeline==3.0.1", "speechbrain==0.5.16",
+    "huggingface_hub==0.20.3", "faiss-cpu",
     "gtts==2.4.0","spacy==3.7.2","beautifulsoup4==4.12.2","googlesearch-python==1.2.3",
     "tiktoken==0.5.1","geocoder==1.38.1","scrapy==2.11.0", "mycroft-mimic3-tts[all]; sys_platform == 'linux'",
 "pysqlite3-binary; sys_platform == 'linux'"]

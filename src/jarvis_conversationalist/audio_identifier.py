@@ -8,8 +8,57 @@ warnings.filterwarnings("ignore", message=".*torchvision is not available1.*")
 
 from torch import device
 from torch.cuda import is_available
+
+# Compat: pyannote.audio 3.1.0 calls torchaudio.set_audio_backend() at import,
+# which was removed in torchaudio >= 2.1 (the backend is auto-selected now).
+# Restore a no-op so importing pyannote doesn't crash on modern torchaudio.
+import torchaudio as _torchaudio
+if not hasattr(_torchaudio, "set_audio_backend"):
+    _torchaudio.set_audio_backend = lambda *args, **kwargs: None
+if not hasattr(_torchaudio, "get_audio_backend"):
+    _torchaudio.get_audio_backend = lambda *args, **kwargs: "soundfile"
+
 from pyannote.audio import Pipeline
 from .audio_vectordb import LocalAudioDB
+
+
+def _ensure_diarization_models() -> str:
+    """Download the self-hosted (ungated) speaker-diarization-3.1 files and return
+    a local pipeline-config path that loads WITHOUT a Hugging Face token.
+
+    Only the gated segmentation checkpoint is self-hosted; the embedding model is
+    already ungated and is fetched anonymously from Hugging Face at load time.
+    Override the host with the JARVIS_MODELS_BASE_URL environment variable.
+    """
+    import urllib.request
+
+    base = os.environ.get(
+        "JARVIS_MODELS_BASE_URL", "https://eliastechlabs.com/jarvis-models"
+    )
+    cache_dir = os.path.join(
+        os.path.expanduser("~"), ".cache", "jarvis-conversationalist", "pyannote"
+    )
+    seg_dir = os.path.join(cache_dir, "segmentation-3.0")
+    os.makedirs(seg_dir, exist_ok=True)
+
+    seg_ckpt = os.path.join(seg_dir, "pytorch_model.bin")
+    pipeline_cfg = os.path.join(cache_dir, "pipeline-config.yaml")
+    for dest, url in {
+        seg_ckpt: f"{base}/segmentation-3.0/pytorch_model.bin",
+        pipeline_cfg: f"{base}/speaker-diarization-3.1/config.yaml",
+    }.items():
+        if not os.path.exists(dest):
+            tmp = dest + ".part"
+            urllib.request.urlretrieve(url, tmp)
+            os.replace(tmp, dest)
+
+    # Point the pipeline's (gated) segmentation reference at the local checkpoint;
+    # the embedding stays on its ungated official repo (anonymous download).
+    raw = open(pipeline_cfg, encoding="utf-8").read()
+    local_cfg = os.path.join(cache_dir, "pipeline-config.local.yaml")
+    with open(local_cfg, "w", encoding="utf-8") as f:
+        f.write(raw.replace("pyannote/segmentation-3.0", seg_ckpt))
+    return local_cfg
 
 
 def db_speaker_id(speaker_id):
@@ -56,9 +105,17 @@ class SpeakerIdentifier:
         self.known_speakers = LocalAudioDB(self.known_speakers_path)
         self.unknown_speakers_path = os.path.join(persist_directory, "unknown_speakers_db")
         self.unknown_speakers = LocalAudioDB(self.unknown_speakers_path)
-        self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",
-                                                 use_auth_token="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"
-                                                 )
+        # Speaker-diarization model. By default we self-host the (MIT-licensed)
+        # pyannote/speaker-diarization-3.1 weights ungated, so end users do NOT
+        # need a Hugging Face token. Set JARVIS_DIARIZATION_MODEL to use a specific
+        # HF repo instead (e.g. the official gated repo) with a personal token via
+        # HF_TOKEN / HUGGINGFACE_TOKEN.
+        model_id = os.environ.get("JARVIS_DIARIZATION_MODEL")
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+        if model_id:
+            self.pipeline = Pipeline.from_pretrained(model_id, use_auth_token=hf_token)
+        else:
+            self.pipeline = Pipeline.from_pretrained(_ensure_diarization_models())
 
     def speedup_if_able(self):
         if is_available():
